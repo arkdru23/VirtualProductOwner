@@ -25,7 +25,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '9.0.x'
-          cache: true
+          # Cache disabled - no packages.lock.json in use
+          # cache: true
 
       - name: Restore
         run: dotnet restore VitrualProductOwner.sln
