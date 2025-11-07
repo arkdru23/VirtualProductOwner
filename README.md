@@ -1,14 +1,18 @@
-[![.NET CI](https://img.shields.io/github/actions/workflow/status/<owner>/<repo>/dotnet-ci.yml?label=.NET%20CI)](https://github.com/<owner>/<repo>/actions/workflows/dotnet-ci.yml)
-[![CodeQL](https://img.shields.io/github/actions/workflow/status/<owner>/<repo>/codeql.yml?label=CodeQL)](https://github.com/<owner>/<repo>/actions/workflows/codeql.yml)
+[![.NET CI](https://github.com/arkdru23/VirtualProductOwner/workflows/.NET%20CI/badge.svg)](https://github.com/arkdru23/VirtualProductOwner/actions/workflows/dotnet-ci.yml)
+[![CodeQL](https://github.com/arkdru23/VirtualProductOwner/workflows/CodeQL/badge.svg)](https://github.com/arkdru23/VirtualProductOwner/actions/workflows/codeql.yml)
+[![Tests](https://img.shields.io/badge/tests-32%20passed-brightgreen)](https://github.com/arkdru23/VirtualProductOwner/actions)
+[![.NET](https://img.shields.io/badge/.NET-9.0-512BD4)](https://dotnet.microsoft.com/)
 
 # Virtual Product Owner (Blazor Server, .NET 9)
 
 Prosta aplikacja Blazor Server do generowania i zarządzania User Stories:
 - Uwierzytelnianie cookie (login, logout)
 - Stories: CRUD (lista, dodaj, edytuj, usuń)
-- Generate: deterministyczny generator user stories z tekstu
-- Testy jednostkowe i integracyjne
-- CI (GitHub Actions) z pokryciem i weryfikacją stylu
+- Generate: deterministyczny generator user stories z tekstu + **LLM (OpenAI GPT-4o-mini)**
+- **Approval Workflow** - Draft → Pending → Approved/Rejected
+- **Azure DevOps Integration** - automatyczna synchronizacja Work Items
+- Testy jednostkowe i integracyjne (32 testy)
+- CI/CD (GitHub Actions) z pokryciem i weryfikacją stylu
 
 ## Wymagania
 - .NET SDK 9.0
