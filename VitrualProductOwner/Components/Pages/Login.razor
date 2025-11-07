@@ -1,0 +1,47 @@
+@page "/login"
+@using Microsoft.AspNetCore.Components.Web
+
+@inject NavigationManager Nav
+
+<PageTitle>Login</PageTitle>
+
+<h1>Login</h1>
+
+<AuthorizeView>
+    <Authorized>
+        <div class="alert alert-success">
+            You are already logged in. Go to <a href="/stories">Stories</a> or <a href="/logout">Logout</a>.
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert alert-danger" role="alert" aria-live="assertive">Invalid username or password.</div>
+        }
+        <form method="post" action="/auth/login">
+            <AntiforgeryToken />
+            <div class="mb-3">
+                <label class="form-label" for="username">Username</label>
+                <input id="username" name="Username" class="form-control" autocomplete="username" required aria-required="true" autofocus />
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="password">Password</label>
+                <input id="password" name="Password" type="password" class="form-control" autocomplete="current-password" required aria-required="true" />
+            </div>
+            <button class="btn btn-primary" type="submit" aria-label="Sign in">
+                Sign in
+            </button>
+        </form>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private string? error;
+
+    protected override void OnParametersSet()
+    {
+        var abs = Nav.ToAbsoluteUri(Nav.Uri);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(abs.Query);
+        error = (query.TryGetValue("error", out var val) && val == "1") ? "error" : null;
+    }
+}

@@ -1,0 +1,44 @@
+    private async Task GenerateStories()
+    {
+        if (busy) return;
+        error = null;
+        message = null;
+        try
+        {
+            busy = true;
+            await Task.Yield();
+
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                error = "You must be logged in.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(generateModel.InputText))
+            {
+                error = "Please provide some input text.";
+                return;
+            }
+
+            var result = Generator.Generate(userId!, generateModel.InputText);
+            generated = result.ToList();
+            if (generated.Count == 0)
+            {
+                error = "No stories were generated. Please adjust your input.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+        private class GenerateInput
+        {
+            [System.ComponentModel.DataAnnotations.Required]
+            [System.ComponentModel.DataAnnotations.MinLength(3)]
+            public string InputText { get; set; } = string.Empty;
+        }

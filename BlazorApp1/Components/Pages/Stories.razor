@@ -1,0 +1,9 @@
+@page "/stories"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@inject IStoryService StoryService
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Stories</PageTitle>

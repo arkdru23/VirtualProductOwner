@@ -1,0 +1,340 @@
+@page "/assets"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Http
+
+@inject BlazorApp1.Services.Context.IContextAssetService AssetService
+@inject BlazorApp1.Services.Extraction.IContentExtractionService Extractor
+@inject IWebHostEnvironment Env
+@inject NavigationManager Nav
+@inject HttpClient Http
+
+<PageTitle>Assets</PageTitle>
+
+<h1>Context assets</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger" role="alert" aria-live="assertive">@error</div>
+}
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert alert-success" role="status" aria-live="polite">@message</div>
+}
+
+<div class="card mb-3">
+    <div class="card-header">Add files</div>
+    <div class="card-body">
+        <div class="border rounded p-4 text-center">
+            <p>Drag and drop files onto the picker or click to select.</p>
+            <InputFile OnChange="OnFilesSelected" multiple />
+            @if (pendingFiles.Count > 0)
+            {
+                <div class="form-text mt-2">@pendingFiles.Count file(s) ready for upload</div>
+                <button class="btn btn-primary btn-sm mt-2" @onclick="UploadAsync" disabled="@busy">
+                    @if (busy) { <span class="spinner-border spinner-border-sm me-2"></span> } Upload
+                </button>
+                <button class="btn btn-secondary btn-sm mt-2 ms-2" @onclick="ClearPending" disabled="@busy">Clear</button>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-2">
+    <h5 class="m-0">Your assets (@assets.Count)</h5>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" @onclick="RefreshAsync" disabled="@busy">Refresh</button>
+        <button class="btn btn-outline-primary btn-sm" @onclick="ExtractSelectedAsync" disabled="@busy || selectedIds.Count == 0">Extract text</button>
+        <button class="btn btn-primary btn-sm" @onclick="GenerateFromSelectedAsync" disabled="@busy || selectedIds.Count == 0">Generate with selected (LLM)</button>
+    </div>
+</div>
+
+@if (assets.Count == 0)
+{
+    <div class="alert alert-info">No assets uploaded yet.</div>
+}
+else
+{
+    <table class="table table-sm align-middle">
+        <thead>
+        <tr>
+            <th style="width: 2rem;"><input type="checkbox" @onchange="ToggleAll"/></th>
+            <th>File</th>
+            <th>Type</th>
+            <th>Size</th>
+            <th>Extract</th>
+            <th style="width:8rem;"></th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var a in assets)
+        {
+            <tr>
+                <td><input type="checkbox" checked="@selectedIds.Contains(a.Id)" @onchange="(e)=>ToggleSelect(a.Id, e.Value as bool? == true)"/></td>
+                <td>@a.FileName</td>
+                <td>@a.ContentType</td>
+                <td>@(a.Size/1024) KB</td>
+                <td>
+                    @if (string.IsNullOrWhiteSpace(a.TextExtract))
+                    {
+                        <span class="text-muted">no text</span>
+                    }
+                    else
+                    {
+                        <div class="small text-muted" title="@a.TextExtract">@((a.TextExtract.Length > 120) ? a.TextExtract.Substring(0,120) + "..." : a.TextExtract)</div>
+                    }
+                </td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-danger" @onclick="(() => DeleteAsync(a.Id))" disabled="@busy">Delete</button>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<BlazorApp1.Models.ContextAsset> assets = new();
+    private List<IBrowserFile> pendingFiles = new();
+    private HashSet<Guid> selectedIds = new();
+    private bool busy;
+    private string? error;
+    private string? message;
+    private string userId = string.Empty;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        await RefreshAsync();
+    }
+
+    private async Task EnsureUserAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+        var id = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            Nav.NavigateTo("/login", forceLoad: true);
+            return;
+        }
+        userId = id;
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            busy = true;
+            error = null;
+            assets = (await AssetService.ListAsync(userId)).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = $"Failed to load assets: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        pendingFiles.Clear();
+        foreach (var f in e.GetMultipleFiles())
+        {
+            pendingFiles.Add(f);
+        }
+    }
+
+    private async Task UploadAsync()
+    {
+        if (pendingFiles.Count == 0) return;
+        try
+        {
+            busy = true;
+            error = null;
+            
+            foreach (var f in pendingFiles)
+            {
+                // Convert IBrowserFile to IFormFile
+                var stream = f.OpenReadStream(long.MaxValue);
+                var formFile = new FormFile(stream, 0, f.Size, "file", f.Name)
+                {
+                    Headers = new HeaderDictionary(),
+                    ContentType = string.IsNullOrWhiteSpace(f.ContentType) ? "application/octet-stream" : f.ContentType
+                };
+
+                await AssetService.UploadAsync(userId, formFile, Env.WebRootPath);
+                stream.Dispose();
+            }
+
+            message = "Files uploaded.";
+            pendingFiles.Clear();
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ClearPending()
+    {
+        pendingFiles.Clear();
+    }
+
+    private void ToggleSelect(Guid id, bool on)
+    {
+        if (on) selectedIds.Add(id);
+        else selectedIds.Remove(id);
+    }
+
+    private void ToggleAll(ChangeEventArgs e)
+    {
+        var on = (bool?)(e.Value) == true;
+        selectedIds.Clear();
+        if (on) foreach (var a in assets) selectedIds.Add(a.Id);
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        if (busy) return;
+        try
+        {
+            busy = true;
+            error = null;
+            
+            var ok = await AssetService.DeleteAsync(userId, id, Env.WebRootPath);
+            if (ok)
+            {
+                assets.RemoveAll(x => x.Id == id);
+                message = "Asset deleted.";
+            }
+            else
+            {
+                error = "Delete failed (asset not found).";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ExtractSelectedAsync()
+    {
+        if (busy || selectedIds.Count == 0) return;
+        try
+        {
+            busy = true;
+            error = null;
+            
+            var count = await AssetService.ExtractAsync(userId, selectedIds.ToList(), Env.WebRootPath, Extractor);
+            message = $"Extraction completed for {count} asset(s).";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            error = $"Extraction failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task GenerateFromSelectedAsync()
+    {
+        if (busy || selectedIds.Count == 0) return;
+        try
+        {
+            busy = true;
+            error = null;
+            
+            var input = await PromptForInputAsync("Provide additional input (optional):");
+            
+            // Ensure CSRF token
+            await EnsureCsrfAsync();
+            
+            var req = new { input = input ?? string.Empty, assetIds = selectedIds.ToList() };
+            var resp = await Http.PostAsJsonAsync("/api/generate/from-assets", req);
+
+            if (resp.IsSuccessStatusCode)
+            {
+                var gen = await resp.Content.ReadFromJsonAsync<List<Story>>();
+                message = $"Generated {gen?.Count ?? 0} stor{((gen?.Count ?? 0) == 1 ? "y" : "ies")}. Check the Generate page.";
+            }
+            else
+            {
+                var content = await resp.Content.ReadAsStringAsync();
+                error = $"Generation failed ({(int)resp.StatusCode}): {(content.StartsWith("<") ? "Authentication error" : content)}";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = $"Generation failed: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private string? csrfToken;
+
+    private async Task EnsureCsrfAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(csrfToken)) return;
+        try
+        {
+            var dto = await Http.GetFromJsonAsync<TokenDto>("/api/antiforgery/token");
+            if (dto is not null && !string.IsNullOrWhiteSpace(dto.token))
+            {
+                csrfToken = dto.token;
+                if (Http.DefaultRequestHeaders.Contains("X-CSRF-TOKEN"))
+                    Http.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
+                Http.DefaultRequestHeaders.Add("X-CSRF-TOKEN", csrfToken);
+            }
+        }
+        catch { /* ignore */ }
+    }
+
+    // Simple JS prompt wrapper (can be replaced with a proper modal)
+    [Inject] IJSRuntime JS { get; set; } = default!;
+    private async Task<string?> PromptForInputAsync(string text)
+    {
+        try
+        {
+            return await JS.InvokeAsync<string>("prompt", text);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private class Story
+    {
+        public string Title { get; set; } = "";
+        public string Description { get; set; } = "";
+        public int Points { get; set; }
+    }
+
+    private class TokenDto
+    {
+        public string token { get; set; } = string.Empty;
+    }
+}

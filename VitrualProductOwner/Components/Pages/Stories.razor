@@ -1,0 +1,710 @@
+@page "/stories"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@inject IStoryService StoryService
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject HttpClient Http
+
+<PageTitle>Stories</PageTitle>
+
+<h1>Stories <span class="badge bg-secondary">@stories.Count</span></h1>
+
+@if (loading)
+{
+    <div class="d-flex align-items-center">
+        <div class="spinner-border me-2" role="status" aria-hidden="true"></div>
+        <span>Loading...</span>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <div class="alert alert-danger" role="alert" aria-live="assertive">@error</div>
+    }
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <div class="alert alert-success" role="status" aria-live="polite">@message</div>
+    }
+
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+            <a class="btn btn-outline-secondary btn-sm" href="/api/stories/export" title="Export your stories to CSV">Export CSV</a>
+        </div>
+        <form method="post" action="/api/stories/import" enctype="multipart/form-data" class="d-flex align-items-center gap-2">
+            <AntiforgeryToken />
+            <input type="file" name="file" class="form-control form-control-sm" aria-label="CSV file to import" />
+            <button type="submit" class="btn btn-sm btn-outline-primary">Import</button>
+        </form>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header">Add new story</div>
+        <div class="card-body">
+            <EditForm Model="@newStory" OnValidSubmit="@AddAsync" Context="formContext">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="mb-3">
+                    <label class="form-label" for="new-title">Title</label>
+                    <input id="new-title" class="form-control" @bind="newStory.Title" autofocus @ref="newTitleRef" />
+                    <ValidationMessage For="() => newStory.Title" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="new-desc">Description</label>
+                    <InputTextArea id="new-desc" class="form-control" @bind-Value="newStory.Description" rows="3" />
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-points">Points (1–13)</label>
+                        <InputNumber id="new-points" class="form-control" @bind-Value="newStory.Points" min="1" max="13" />
+                        <ValidationMessage For="() => newStory.Points" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-state">State</label>
+                        <InputText id="new-state" class="form-control" @bind-Value="newStory.State" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-priority">Priority</label>
+                        <InputNumber id="new-priority" class="form-control" @bind-Value="newStory.Priority" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-area">Area</label>
+                        <InputText id="new-area" class="form-control" @bind-Value="newStory.Area" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-iteration">Iteration</label>
+                        <InputText id="new-iteration" class="form-control" @bind-Value="newStory.Iteration" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-assigned">Assigned To</label>
+                        <InputText id="new-assigned" class="form-control" @bind-Value="newStory.AssignedTo" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-risk">Risk</label>
+                        <InputText id="new-risk" class="form-control" @bind-Value="newStory.Risk" />
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label" for="new-target">Target date</label>
+                        <InputDate id="new-target" class="form-control" @bind-Value="newStory.TargetDate" />
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="new-ac">Acceptance Criteria</label>
+                    <InputTextArea id="new-ac" class="form-control" @bind-Value="newStory.AcceptanceCriteria" rows="3" />
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label" for="new-related">Related Work item</label>
+                        <InputText id="new-related" class="form-control" @bind-Value="newStory.RelatedWorkItem" />
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label" for="new-usecase">Use case</label>
+                        <InputText id="new-usecase" class="form-control" @bind-Value="newStory.UseCase" />
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary" disabled="@busy" aria-label="Add new story">
+                    @if (busy)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span>Adding...</span>
+                    }
+                    else
+                    {
+                        <span>Add</span>
+                    }
+                </button>
+            </EditForm>
+        </div>
+    </div>
+
+    @if (!stories.Any())
+    {
+        <div class="alert alert-info" role="status" aria-live="polite">
+            No stories yet.
+            <button type="button" class="btn btn-sm btn-primary ms-2" @onclick="FocusAdd" aria-label="Add your first story">
+                Add your first story
+            </button>
+        </div>
+    }
+    else
+    {
+        <table class="table table-striped align-middle">
+            <thead>
+            <tr>
+                <th style="width:30%">Title</th>
+                <th>Description</th>
+                <th style="width:10%">Points</th>
+                <th style="width:18%"></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var s in stories)
+            {
+                if (editingId == s.Id)
+                {
+                    <tr>
+                        <td>
+                            <InputText class="form-control" @bind-Value="editModel.Title" aria-label="Title" />
+                        </td>
+                        <td>
+                            <div class="mb-2">
+                                    <div class="mb-2">
+                                        <InputTextArea class="form-control" @bind-Value="editModel.Description" rows="2" aria-label="Description" />
+                                    </div>
+                                    <div class="mb-2">
+                                        <label class="form-label small">Acceptance Criteria</label>
+                                        <InputTextArea class="form-control" @bind-Value="editModel.AcceptanceCriteria" rows="2" aria-label="Acceptance Criteria" />
+                                    </div>
+
+                                    <div class="border rounded p-2 mt-2">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <strong>AI Assistant</strong>
+                                            <div class="d-flex gap-2">
+                                                <button class="btn btn-sm btn-outline-secondary" @onclick="@(() => LoadConversationAsync(s))" disabled="@busy || chatBusy">Load history</button>
+                                                <button class="btn btn-sm btn-outline-secondary" @onclick="ToggleAssetsPanel" disabled="@busy || chatBusy">Assets</button>
+                                            </div>
+                                        </div>
+                                        <div class="small text-muted">Give feedback to refine this story (title/description/points/acceptance criteria). Optionally include selected assets as context.</div>
+
+                                        @if (showAssetsPanel)
+                                        {
+                                            <div class="mt-2 border rounded p-2">
+                                                <div class="d-flex justify-content-between align-items-center">
+                                                    <span class="small fw-bold">Context assets</span>
+                                                    <button class="btn btn-sm btn-outline-secondary" @onclick="LoadAssetsAsync" disabled="@busy || chatBusy">Refresh</button>
+                                                </div>
+                                                @if (chatAssets.Count == 0)
+                                                {
+                                                    <div class="small text-muted mt-1">No assets. Upload on the Assets page.</div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="small mt-2" style="max-height: 160px; overflow:auto;">
+                                                        @foreach (var a in chatAssets)
+                                                        {
+                                                            <div class="form-check">
+                                                                <input class="form-check-input" type="checkbox" checked="@selectedAssetIds.Contains(a.Id)" @onchange="(e)=>ToggleAssetSelection(a.Id, (bool? )e.Value == true)" id="asset_@a.Id" />
+                                                                <label class="form-check-label" for="asset_@a.Id">
+                                                                    @a.FileName <span class="text-muted">(@a.ContentType)</span>
+                                                                </label>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+
+                                        <div class="mt-2" style="max-height: 200px; overflow:auto;">
+                                            @if (chatMessages.Count == 0)
+                                            {
+                                                <div class="text-muted small">No messages yet.</div>
+                                            }
+                                            else
+                                            {
+                                                @foreach (var m in chatMessages)
+                                                {
+                                                    <div class="mb-1">
+                                                        <span class="badge bg-light text-dark">@m.Role</span>
+                                                        <span class="small">@m.Content</span>
+                                                    </div>
+                                                }
+                                            }
+                                        </div>
+
+                                        <div class="mt-2">
+                                            <InputTextArea class="form-control" @bind-Value="chatInput" rows="2" placeholder="e.g. Make the title shorter and propose clearer acceptance criteria..." />
+                                            <div class="d-flex gap-2 mt-2">
+                                                <button class="btn btn-sm btn-primary" @onclick="@(() => SendChatAsync(s))" disabled="@busy || chatBusy || string.IsNullOrWhiteSpace(chatInput)">
+                                                    @if (chatBusy) { <span class="spinner-border spinner-border-sm me-1"></span> } Ask
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-primary" @onclick="ApplySuggestionAsync" disabled="@busy || lastSuggestion is null">Apply suggestion</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small">Acceptance Criteria</label>
+                                <InputTextArea class="form-control" @bind-Value="editModel.AcceptanceCriteria" rows="2" aria-label="Acceptance Criteria" />
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label small">Refine context (LLM)</label>
+                                <InputTextArea class="form-control" @bind-Value="refineContext" rows="2" aria-label="Refine context" placeholder="Add additional details to refine this story" />
+                                <button class="btn btn-sm btn-outline-secondary mt-1" @onclick="@(() => RefineAsync(s))" disabled="@busy">Refine with LLM</button>
+                            </div>
+                        </td>
+                        <td style="max-width:100px;">
+                            <InputNumber class="form-control" @bind-Value="editModel.Points" min="1" max="13" aria-label="Points" />
+                        </td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-success me-2" title="Save changes" aria-label="Save changes" @onclick="@(() => SaveEditAsync(s))" disabled="@busy">
+                                @if (busy)
+                                {
+                                    <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                                    <span>Saving...</span>
+                                }
+                                else
+                                {
+                                    <span>Save</span>
+                                }
+                            </button>
+                            <button class="btn btn-sm btn-secondary" title="Cancel editing" aria-label="Cancel editing" @onclick="CancelEdit" disabled="@busy">Cancel</button>
+                        </td>
+                    </tr>
+                }
+                else
+                {
+                    <tr>
+                        <td>@s.Title</td>
+                        <td>
+                            <div class="small text-muted">@s.Description</div>
+                        </td>
+                        <td>@s.Points</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-primary me-2" title="Edit @s.Title" aria-label="Edit @s.Title" @onclick="@(() => BeginEdit(s))">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" title="Delete @s.Title" aria-label="Delete @s.Title" @onclick="@(() => DeleteAsync(s))" disabled="@busy">Delete</button>
+                        </td>
+                    </tr>
+                }
+            }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    private List<Story> stories = new();
+    private StoryInput newStory = new();
+    private StoryInput editModel = new();
+    private Guid? editingId;
+    private bool loading = true;
+    private bool busy;
+    private string? error;
+    private string? message;
+    private string userId = string.Empty;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        await LoadAsync();
+    }
+
+    private async Task EnsureUserAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+        var id = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            Nav.NavigateTo("/login", forceLoad: true);
+            return;
+        }
+        userId = id;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            loading = true;
+            var list = await StoryService.ListAsync(userId);
+            stories = list.ToList();
+            Resort();
+        }
+        finally
+        {
+            loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task AddAsync()
+    {
+        if (busy) return;
+        try
+        {
+            busy = true;
+            var created = await StoryService.CreateAsync(userId, newStory.Title.Trim(), newStory.Description.Trim(), newStory.Points);
+
+            // Uzupełnij dodatkowe pola za pomocą Update
+            created.Area = newStory.Area;
+            created.Iteration = newStory.Iteration;
+            created.State = newStory.State;
+            created.AssignedTo = newStory.AssignedTo;
+            created.Priority = newStory.Priority;
+            created.Risk = newStory.Risk;
+            created.TargetDate = newStory.TargetDate;
+            created.AcceptanceCriteria = newStory.AcceptanceCriteria;
+            created.RelatedWorkItem = newStory.RelatedWorkItem;
+            created.UseCase = newStory.UseCase;
+
+            await StoryService.UpdateAsync(userId, created);
+
+            stories.Add(created);
+            newStory = new StoryInput();
+            Resort();
+            message = "Story added.";
+            error = null;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void BeginEdit(Story s)
+    {
+        if (busy) return;
+        editingId = s.Id;
+        editModel = new StoryInput
+        {
+            Title = s.Title,
+            Description = s.Description,
+            Points = s.Points,
+            Area = s.Area,
+            Iteration = s.Iteration,
+            State = s.State,
+            AssignedTo = s.AssignedTo,
+            Priority = s.Priority,
+            Risk = s.Risk,
+            TargetDate = s.TargetDate,
+            AcceptanceCriteria = s.AcceptanceCriteria,
+            RelatedWorkItem = s.RelatedWorkItem,
+            UseCase = s.UseCase
+        };
+    }
+
+    private void CancelEdit()
+    {
+        editingId = null;
+        editModel = new StoryInput();
+    }
+
+    private async Task SaveEditAsync(Story s)
+    {
+        if (busy || editingId != s.Id) return;
+        try
+        {
+            busy = true;
+            var updated = new Story
+            {
+                Id = s.Id,
+                UserId = userId,
+                Title = editModel.Title.Trim(),
+                Description = editModel.Description.Trim(),
+                Points = editModel.Points,
+
+                Area = editModel.Area,
+                Iteration = editModel.Iteration,
+                State = editModel.State,
+                AssignedTo = editModel.AssignedTo,
+                Priority = editModel.Priority,
+                Risk = editModel.Risk,
+                TargetDate = editModel.TargetDate,
+                AcceptanceCriteria = editModel.AcceptanceCriteria,
+                RelatedWorkItem = editModel.RelatedWorkItem,
+                UseCase = editModel.UseCase,
+
+                CreatedAt = s.CreatedAt,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            var ok = await StoryService.UpdateAsync(userId, updated);
+            if (ok)
+            {
+                // Fetch the saved entity (with updated timestamps) to keep consistency
+                var refreshed = await StoryService.GetByIdAsync(userId, s.Id) ?? updated;
+                var idx = stories.FindIndex(x => x.Id == s.Id);
+                if (idx >= 0) stories[idx] = refreshed;
+                editingId = null;
+                Resort();
+                message = "Story updated.";
+                error = null;
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task DeleteAsync(Story s)
+    {
+        if (busy) return;
+        try
+        {
+            busy = true;
+            var ok = await StoryService.DeleteAsync(userId, s.Id);
+            if (ok)
+            {
+                stories.RemoveAll(x => x.Id == s.Id);
+                Resort();
+                message = "Story deleted.";
+                error = null;
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void Resort()
+    {
+        stories = stories
+            .OrderByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .ToList();
+    }
+
+    private ElementReference newTitleRef;
+    private string? refineContext;
+
+    private async Task FocusAdd()
+    {
+        // Ustaw focus na polu tytułu w formularzu dodawania
+        await newTitleRef.FocusAsync();
+    }
+
+    // Chat state
+    private List<ChatMessageVm> chatMessages = new();
+    private string chatInput = string.Empty;
+    private bool chatBusy;
+    private BlazorApp1.Models.RefinedStoryResponse? lastSuggestion;
+    private string? csrfToken;
+
+    // assets selection
+    private List<BlazorApp1.Models.ContextAsset> chatAssets = new();
+    private HashSet<Guid> selectedAssetIds = new();
+    private bool showAssetsPanel = false;
+
+    private void ToggleAssetsPanel()
+    {
+        showAssetsPanel = !showAssetsPanel;
+    }
+
+    private async Task LoadAssetsAsync()
+    {
+        try
+        {
+            var resp = await Http.GetAsync("/api/context/");
+            if (resp.IsSuccessStatusCode)
+            {
+                chatAssets = (await resp.Content.ReadFromJsonAsync<List<BlazorApp1.Models.ContextAsset>>()) ?? new();
+            }
+        }
+        catch
+        {
+            // ignore; UI will show empty
+        }
+    }
+
+    private void ToggleAssetSelection(Guid id, bool on)
+    {
+        if (on) selectedAssetIds.Add(id);
+        else selectedAssetIds.Remove(id);
+    }
+
+    private async Task EnsureCsrfAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(csrfToken)) return;
+        try
+        {
+            var dto = await Http.GetFromJsonAsync<TokenDto>("/api/antiforgery/token");
+            if (dto is not null && !string.IsNullOrWhiteSpace(dto.token))
+            {
+                csrfToken = dto.token;
+                if (Http.DefaultRequestHeaders.Contains("X-CSRF-TOKEN"))
+                    Http.DefaultRequestHeaders.Remove("X-CSRF-TOKEN");
+                Http.DefaultRequestHeaders.Add("X-CSRF-TOKEN", csrfToken);
+            }
+        }
+        catch { /* ignore; endpoint zwróci JSON error jeśli brak */ }
+    }
+
+    private async Task LoadConversationAsync(Story s)
+    {
+        try
+        {
+            chatBusy = true;
+            await EnsureCsrfAsync();
+            var resp = await Http.GetAsync($"/api/stories/{s.Id}/conversation/");
+            if (resp.IsSuccessStatusCode)
+            {
+                var payload = await resp.Content.ReadFromJsonAsync<ChatHistoryDto>();
+                chatMessages = payload?.messages?.Select(m => new ChatMessageVm { Role = m.Role, Content = m.Content }).ToList() ?? new();
+            }
+            else
+            {
+                // show nothing; optional: set error
+            }
+        }
+        finally
+        {
+            chatBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SendChatAsync(Story s)
+    {
+        if (string.IsNullOrWhiteSpace(chatInput)) return;
+        try
+        {
+            chatBusy = true;
+            await EnsureCsrfAsync();
+
+            var req = new ChatMessageRequestDto { Content = chatInput, AssetIds = selectedAssetIds.ToList() };
+            var resp = await Http.PostAsJsonAsync($"/api/stories/{s.Id}/conversation/messages", req);
+            if (resp.IsSuccessStatusCode)
+            {
+                var payload = await resp.Content.ReadFromJsonAsync<ChatResponseDto>();
+                chatMessages = payload?.messages?.Select(m => new ChatMessageVm { Role = m.Role, Content = m.Content }).ToList() ?? chatMessages;
+                lastSuggestion = payload?.suggestion;
+                chatInput = string.Empty;
+                message = "Assistant replied with a suggestion (not saved).";
+                error = null;
+            }
+            else
+            {
+                var txt = await resp.Content.ReadAsStringAsync();
+                error = $"Chat failed ({(int)resp.StatusCode})";
+                if (!string.IsNullOrEmpty(txt) && txt.Length > 0 && txt[0] == '<') error += " (HTML error page)";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            chatBusy = false;
+        }
+    }
+
+    private void ApplySuggestionAsync()
+    {
+        if (lastSuggestion is null) return;
+        editModel.Title = lastSuggestion.Title;
+        editModel.Description = lastSuggestion.Description;
+        editModel.Points = lastSuggestion.Points;
+        editModel.AcceptanceCriteria = lastSuggestion.AcceptanceCriteria ?? editModel.AcceptanceCriteria;
+        message = "Applied AI suggestion (not saved yet).";
+        error = null;
+    }
+
+    private async Task RefineAsync(Story s)
+    {
+        if (busy || editingId != s.Id) return;
+        try
+        {
+            busy = true;
+
+            var req = new RefineStoryRequest
+            {
+                ExtraContext = refineContext ?? string.Empty,
+                Title = editModel.Title,
+                Description = editModel.Description,
+                Points = editModel.Points,
+                AcceptanceCriteria = editModel.AcceptanceCriteria
+            };
+
+            var resp = await Http.PostAsJsonAsync("/api/generate/refine", req);
+            if (resp.IsSuccessStatusCode)
+            {
+                var refined = await resp.Content.ReadFromJsonAsync<RefinedStoryResponse>();
+                if (refined is not null)
+                {
+                    editModel.Title = refined.Title;
+                    editModel.Description = refined.Description;
+                    editModel.Points = refined.Points;
+                    editModel.AcceptanceCriteria = refined.AcceptanceCriteria ?? editModel.AcceptanceCriteria;
+
+                    // Apply additional fields if LLM provided them
+                    if (!string.IsNullOrWhiteSpace(refined.Area))
+                        editModel.Area = refined.Area;
+                    if (refined.Priority.HasValue)
+                        editModel.Priority = refined.Priority;
+                    if (!string.IsNullOrWhiteSpace(refined.Risk))
+                        editModel.Risk = refined.Risk;
+                    if (!string.IsNullOrWhiteSpace(refined.UseCase))
+                        editModel.UseCase = refined.UseCase;
+
+                    message = "Refined with LLM (not saved yet).";
+                    error = null;
+                }
+            }
+            else
+            {
+                error = "Refine failed.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private class StoryInput
+    {
+        [System.ComponentModel.DataAnnotations.Required]
+        public string Title { get; set; } = string.Empty;
+
+        public string Description { get; set; } = string.Empty;
+
+        [System.ComponentModel.DataAnnotations.Range(1, 13)]
+        public int Points { get; set; } = 3;
+
+        public string? Area { get; set; }
+        public string? Iteration { get; set; }
+        public string? State { get; set; }
+        public string? AssignedTo { get; set; }
+        public int? Priority { get; set; }
+        public string? Risk { get; set; }
+        public DateTime? TargetDate { get; set; }
+        public string? AcceptanceCriteria { get; set; }
+        public string? RelatedWorkItem { get; set; }
+        public string? UseCase { get; set; }
+    }
+
+    private class ChatMessageVm
+    {
+        public string Role { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+    }
+
+    private class ChatHistoryDto
+    {
+        public List<ChatMessageDto> messages { get; set; } = new();
+    }
+
+    private class ChatMessageDto
+    {
+        public string Role { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+    }
+
+    private class ChatMessageRequestDto
+    {
+        public string? Content { get; set; }
+        public List<Guid> AssetIds { get; set; } = new();
+    }
+
+    private class ChatResponseDto
+    {
+        public List<ChatMessageDto> messages { get; set; } = new();
+        public BlazorApp1.Models.RefinedStoryResponse? suggestion { get; set; }
+    }
+
+    private class TokenDto
+    {
+        public string token { get; set; } = string.Empty;
+    }
+}

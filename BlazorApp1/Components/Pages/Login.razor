@@ -1,0 +1,72 @@
+@page "/login"
+@rendermode InteractiveServer
+
+<PageTitle>Login</PageTitle>
+
+<h1>Login</h1>
+
+<AuthorizeView Context="auth">
+    <Authorized>
+        <div class="alert alert-success">
+            You are already logged in. Go to <a href="/stories">Stories</a> or <a href="/logout">Logout</a>.
+        </div>
+    </Authorized>
+    <NotAuthorized>
+        <EditForm Model="@model" OnValidSubmit="@HandleLogin">
+            <ChildContent Context="editContext">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <InputText class="form-control" @bind-Value="model.Username" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <InputText class="form-control" type="password" @bind-Value="model.Password" />
+                </div>
+                @if (!string.IsNullOrEmpty(error))
+                {
+                    <div class="alert alert-danger">@error</div>
+                }
+                <button class="btn btn-primary" type="submit" disabled="@busy">
+                    @(busy ? "Signing in..." : "Sign in")
+                </button>
+            </ChildContent>
+        </EditForm>
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    private LoginRequest model = new();
+    private bool busy;
+    private string? error;
+
+    [Inject] private HttpClient Http { get; set; } = default!;
+    [Inject] private NavigationManager Nav { get; set; } = default!;
+
+    private async Task HandleLogin()
+    {
+        try
+        {
+            busy = true;
+            error = null;
+            var resp = await Http.PostAsJsonAsync("/login", model);
+            if (resp.IsSuccessStatusCode)
+            {
+                Nav.NavigateTo("/stories", true);
+            }
+            else
+            {
+                error = "Invalid username or password.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

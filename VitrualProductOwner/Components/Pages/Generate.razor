@@ -1,0 +1,394 @@
+@page "/generate"
+@attribute [Authorize]
+@rendermode InteractiveServer
+
+@inject IStoryGeneratorService Generator
+@inject IStoryService StoryService
+@inject NavigationManager Nav
+@inject BlazorApp1.Services.Extraction.IContentExtractionService Extractor
+@inject BlazorApp1.Services.Llm.ILlmClient Llm
+@using Microsoft.AspNetCore.Http
+
+<PageTitle>Generate</PageTitle>
+
+<h1>Generate User Stories</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <div class="alert alert-danger" role="alert" aria-live="assertive">@error</div>
+}
+@if (!string.IsNullOrEmpty(message))
+{
+    <div class="alert alert-success" role="status" aria-live="polite">@message</div>
+}
+
+<div class="card mb-3">
+    <div class="card-header">Input</div>
+    <div class="card-body">
+        <EditForm EditContext="@editContext" OnValidSubmit="@GenerateStories">
+            <DataAnnotationsValidator/>
+            <div class="mb-3">
+                <label class="form-label" for="gen-input">Paste requirements or notes (one story per line)</label>
+                <InputTextArea id="gen-input" class="form-control" @bind-Value="inputText" rows="6" aria-label="Input text for generating user stories" autofocus
+                               placeholder="e.g. As a user I want to reset my password so that I can regain access" />
+                <div class="form-text">
+                    Tip: One line = one story. Keywords like “must/required/critical” increase points; “should/important” slightly increase them.
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Attach context (PDF/images/notes)</label>
+                <InputFile OnChange="OnFilesSelected" multiple />
+                @if (selectedFiles.Count > 0)
+                {
+                    <div class="form-text">@selectedFiles.Count file(s) selected</div>
+                }
+            </div>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary" disabled="@busy">
+                    @if (busy)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span>Generate</span>
+                    }
+                    else
+                    {
+                        <span>Generate</span>
+                    }
+                </button>
+                <button type="button" class="btn btn-outline-primary" @onclick="GenerateWithContextAsync" disabled="@busy">
+                    @if (busy)
+                    {
+                        <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                        <span>Generate with context (LLM)</span>
+                    }
+                    else
+                    {
+                        <span>Generate with context (LLM)</span>
+                    }
+                </button>
+                <button type="button" class="btn btn-secondary ms-2" @onclick="ClearAll" aria-label="Clear input text" disabled="@busy || string.IsNullOrWhiteSpace(inputText)">Clear</button>
+            </div>
+        </EditForm>
+    </div>
+</div>
+
+@if (generated.Count > 0)
+{
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="m-0">Preview (@generated.Count)</h5>
+        <div>
+            <button class="btn btn-success" @onclick="SaveAllAsync" disabled="@saveBusy">
+                @if (saveBusy)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                    <span>Saving...</span>
+                }
+                else
+                {
+                    <span>Save all</span>
+                }
+            </button>
+        </div>
+    </div>
+    <table class="table table-striped align-middle">
+        <thead>
+        <tr>
+            <th style="width:30%">Title</th>
+            <th>Description</th>
+            <th style="width:10%">Points</th>
+            <th style="width:15%"></th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var s in generated)
+        {
+            <tr>
+                <td>@s.Title</td>
+                <td><div class="small text-muted">@s.Description</div></td>
+                <td>@s.Points</td>
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-success" @onclick="(() => SaveOneAsync(s))" disabled="@saveBusy">
+                        @if (saveBusy)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            <span>Saving...</span>
+                        }
+                        else
+                        {
+                            <span>Save</span>
+                        }
+                    </button>
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+else
+{
+    <div class="alert alert-info" role="status" aria-live="polite">
+        Paste your requirements above and click <strong>Generate</strong> to preview stories here.
+        Example: <code>As a user I must upload documents so that I can share them with my team</code>
+    </div>
+}
+
+@code {
+    private string inputText = string.Empty;
+    private List<Story> generated = new();
+    private bool busy;
+    private bool saveBusy;
+    private string? userId;
+    private string? error;
+    private string? message;
+    private readonly List<IBrowserFile> selectedFiles = new();
+    private EditContext? editContext;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthenticationStateTask { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await EnsureUserAsync();
+        editContext = new EditContext(this);
+    }
+
+    private async Task EnsureUserAsync()
+    {
+        var authState = await AuthenticationStateTask;
+        var user = authState.User;
+        userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            Nav.NavigateTo("/login", true);
+        }
+    }
+
+    private void GenerateStories()
+    {
+        if (busy) return;
+        error = null;
+        message = null;
+        try
+        {
+            busy = true;
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                error = "You must be logged in.";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(inputText))
+            {
+                error = "Please provide some input text.";
+                return;
+            }
+
+            var result = Generator.Generate(userId!, inputText);
+            generated = result.ToList();
+            if (generated.Count == 0)
+            {
+                error = "No stories were generated. Please adjust your input.";
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ClearAll()
+    {
+        inputText = string.Empty;
+        generated.Clear();
+        message = null;
+        error = null;
+    }
+
+    private async Task SaveAllAsync()
+    {
+        if (saveBusy || generated.Count == 0) return;
+        error = null;
+        message = null;
+
+        try
+        {
+            saveBusy = true;
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                error = "You must be logged in.";
+                return;
+            }
+
+            foreach (var s in generated)
+            {
+                await StoryService.CreateAsync(userId!, s.Title, s.Description, s.Points);
+            }
+
+            message = $"Saved {generated.Count} stor{(generated.Count == 1 ? "y" : "ies")}.";
+            generated.Clear();
+            inputText = string.Empty;
+            // Optionally navigate to stories list
+            Nav.NavigateTo("/stories", true);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            saveBusy = false;
+        }
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        selectedFiles.Clear();
+        foreach (var f in e.GetMultipleFiles())
+        {
+            selectedFiles.Add(f);
+        }
+    }
+
+    private async Task GenerateWithContextAsync()
+    {
+        if (busy) return;
+        error = null;
+        message = null;
+
+        try
+        {
+            busy = true;
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                error = "You must be logged in.";
+                return;
+            }
+
+            // Zbuduj listę IFormFile z IBrowserFile
+            var formFiles = new List<IFormFile>();
+            var toDispose = new List<Stream>();
+            try
+            {
+                foreach (var f in selectedFiles)
+                {
+                    var stream = f.OpenReadStream(long.MaxValue);
+                    toDispose.Add(stream);
+                    var ff = new FormFile(stream, 0, f.Size, "files", f.Name)
+                    {
+                        Headers = new HeaderDictionary(),
+                        ContentType = string.IsNullOrWhiteSpace(f.ContentType) ? "application/octet-stream" : f.ContentType
+                    };
+                    formFiles.Add(ff);
+                }
+
+                // Ekstrakcja tekstu z plików
+                var extra = await Extractor.ExtractTextAsync(formFiles);
+
+                // Złożenie kontekstu
+                string Trunc(string s, int max) => s.Length <= max ? s : s[..max];
+                var mergedContext = string.Join("\n\n", new[] { inputText, extra }.Where(s => !string.IsNullOrWhiteSpace(s)));
+                mergedContext = Trunc(mergedContext, 16000);
+
+                // Wywołanie LLM
+                var stories = new List<Story>();
+                var json = await Llm.GenerateRawAsync(BlazorApp1.Services.Llm.LlmPromptBuilder.Build(mergedContext));
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(json);
+                        var arr = doc.RootElement.GetProperty("stories").EnumerateArray();
+                        foreach (var el in arr)
+                        {
+                            var title = el.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "";
+                            var desc = el.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "";
+                            var pts = el.TryGetProperty("points", out var p) ? Math.Clamp(p.GetInt32(), 1, 13) : 3;
+                            var ac = el.TryGetProperty("acceptanceCriteria", out var a) ? a.GetString() ?? "" : "";
+                            
+                            // Parse additional fields
+                            var area = el.TryGetProperty("area", out var ar) ? ar.GetString() : null;
+                            var iteration = el.TryGetProperty("iteration", out var it) ? it.GetString() : null;
+                            var state = el.TryGetProperty("state", out var st) ? st.GetString() : "New";
+                            var priority = el.TryGetProperty("priority", out var pr) && pr.TryGetInt32(out var prInt) ? prInt : (int?)null;
+                            var risk = el.TryGetProperty("risk", out var ri) ? ri.GetString() : null;
+                            var useCase = el.TryGetProperty("useCase", out var uc) ? uc.GetString() : null;
+
+                            stories.Add(new Story
+                            {
+                                UserId = userId!,
+                                Title = title,
+                                Description = desc,
+                                Points = pts,
+                                AcceptanceCriteria = ac,
+                                Area = area,
+                                Iteration = iteration,
+                                State = state,
+                                Priority = priority,
+                                Risk = risk,
+                                UseCase = useCase
+                            });
+                        }
+                    }
+                    catch
+                    {
+                        // ignoruj i fallback
+                    }
+                }
+
+                if (stories.Count == 0)
+                {
+                    stories = Generator.Generate(userId!, mergedContext).ToList();
+                }
+
+                generated = stories;
+                if (generated.Count == 0)
+                {
+                    error = "No stories were generated.";
+                }
+            }
+            finally
+            {
+                foreach (var s in toDispose) s.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SaveOneAsync(Story s)
+    {
+        if (saveBusy) return;
+        error = null;
+        message = null;
+
+        try
+        {
+            saveBusy = true;
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                error = "You must be logged in.";
+                return;
+            }
+
+            await StoryService.CreateAsync(userId!, s.Title, s.Description, s.Points);
+            generated.Remove(s);
+            message = "Story saved.";
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            saveBusy = false;
+        }
+    }
+}
